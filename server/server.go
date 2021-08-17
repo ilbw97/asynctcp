@@ -94,23 +94,40 @@ func ConnHandler(conn net.Conn) {
 							a += 1
 							log.Printf("%d번째 loop\n", a)
 							if recvlen == totsize {
-								resultlarge := execute(string(recvall[:recvlen]))
-								_, err := conn.Write(resultlarge)
-								if err != nil {
-									log.Printf("write err : %v\n", err)
-									return
-								}
-								log.Printf("resultlen : %v == totsize : %v\n", recvlen, totsize)
+								go func() {
+									resultlarge := execute(string(recvall[:recvlen]))
+									_, err := conn.Write(resultlarge)
+									if err != nil {
+										log.Printf("write err : %v\n", err)
+										return
+									}
+									log.Printf("resultlen : %v == totsize : %v\n", recvlen, totsize)
+								}()
+								// resultlarge := execute(string(recvall[:recvlen]))
+								// _, err := conn.Write(resultlarge)
+								// if err != nil {
+								// 	log.Printf("write err : %v\n", err)
+								// 	return
+								// }
+								// log.Printf("resultlen : %v == totsize : %v\n", recvlen, totsize)
 							}
 							log.Printf("NOT FINISH LOOP resultlen : %v == totsize : %v\n", recvlen, totsize)
 						}
 					} else {
-						result := execute(string(recvall[:recvlen]))
-						_, err := conn.Write(result)
-						if err != nil {
-							log.Printf("write err : %v\n", err)
-							return
-						}
+						go func() {
+							result := execute(string(recvall[:recvlen]))
+							_, err := conn.Write(result)
+							if err != nil {
+								log.Printf("write err : %v\n", err)
+								return
+							}
+						}()
+						// result := execute(string(recvall[:recvlen]))
+						// _, err := conn.Write(result)
+						// if err != nil {
+						// 	log.Printf("write err : %v\n", err)
+						// 	return
+						// }
 					}
 				}
 			} else {
