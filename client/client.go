@@ -35,10 +35,10 @@ func read(c net.Conn) {
 
 				log.Printf("receive size : %d\n", size)
 
-				sizelen := len(strconv.Itoa(size))
+				sizelen := len(strconv.Itoa(size)) //server가 명시한 data의 전체 길이(cmd.Output()의 길이)
 				log.Printf("sizelen : %d\n", sizelen)
 
-				totsize := size + sizelen
+				totsize := size + sizelen //server가 보낸 data의 전체 길이
 				log.Printf("totsize : %d\n", totsize)
 				if err != nil {
 					log.Println(err)
@@ -75,7 +75,7 @@ func read(c net.Conn) {
 								log.Printf("resultlen : %v == totsize : %v\n", resultlen, totsize)
 								break
 							}
-							log.Printf("NOT FINISH LOOP resultlen : %v == totsize : %v\n", resultlen, totsize)
+							log.Printf("NOT FINISH LOOP resultlen : %v != totsize : %v\n", resultlen, totsize)
 						}
 					} else {
 						log.Printf("\n%v", string(resultall[:recieive-sizeindex]))
@@ -112,8 +112,9 @@ func sending(c net.Conn, sendingerr chan error) {
 				log.Println(er)
 				sendingerr <- er
 			}
-			// log.Println("sending complete")
-			go read(c)
+			// // log.Println("sending complete")
+			// go read(c)
+			// go read(c)
 
 		}
 	}
@@ -154,6 +155,7 @@ func main() {
 			log.Println("sending complete")
 
 		}
-
+		go read(conn)
+		// read(conn)
 	}
 }
