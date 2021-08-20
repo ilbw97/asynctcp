@@ -11,11 +11,13 @@ import (
 )
 
 type Data struct {
-	Recvall []byte
-	Command string
-	Totsize int
-	Result  []byte
-	Lock    sync.Mutex
+	Conn        net.Conn
+	Recvall     []byte
+	Command     string
+	Totsize     int
+	Sendingsize int
+	Result      []byte
+	Lock        sync.Mutex
 }
 
 func main() {
@@ -71,7 +73,10 @@ func (d *Data) CommRead(conn net.Conn) {
 				log.Printf("sizelen : %d\n", sizelen)
 
 				totsize := size + sizelen
+				d.Lock.Lock()
+
 				d.Totsize = totsize
+				d.Lock.Unlock()
 				log.Printf("totsize : %d\n", totsize)
 				if err != nil {
 					log.Println(err)
@@ -105,8 +110,9 @@ func (d *Data) CommRead(conn net.Conn) {
 							log.Printf("%d번째 loop\n", a)
 
 							if recvlen == totsize {
-
+								d.Lock.Lock()
 								d.Command = string(recvall[:recvlen])
+								d.Lock.Unlock()
 								go d.Execute(conn)
 
 							}
@@ -114,8 +120,9 @@ func (d *Data) CommRead(conn net.Conn) {
 							log.Printf("NOT FINISH LOOP resultlen : %v == totsize : %v\n", recvlen, totsize)
 						}
 					} else {
-
+						d.Lock.Lock()
 						d.Command = string(recvall[:recvlen])
+						d.Lock.Unlock()
 						go d.Execute(conn)
 
 					}
@@ -132,7 +139,7 @@ func (d *Data) Execute(conn net.Conn) {
 	// Result := make(chan []byte, 4096)
 	// defer close(Result)
 
-	// log.Printf("Result before exex.Command : %v, len of Result : %v\n", Result, len(Result))
+	log.Printf("#############Result before exex.Command : %v, len of Result : %v#############\n", string(d.Result), len(d.Result))
 
 	cmd := exec.Command("bash", "-c", d.Command)
 	log.Printf("Execute Command : %v\n", cmd)
@@ -147,6 +154,7 @@ func (d *Data) Execute(conn net.Conn) {
 
 			d.Lock.Lock()
 			d.Result = append(cmdreslen, ([]byte("No output data"))...)
+			d.Sendingsize = len(d.Result)
 			d.Lock.Unlock()
 
 			go d.CommSend(conn)
@@ -154,9 +162,9 @@ func (d *Data) Execute(conn net.Conn) {
 
 		} else {
 			log.Println("#############stable case#############")
-
 			d.Lock.Lock()
 			d.Result = append(cmdreslen, cmdres...)
+			d.Sendingsize = len(d.Result)
 			log.Printf("len of totres : %v, totres : %v\n", len(d.Result), string(d.Result))
 			d.Lock.Unlock()
 
@@ -171,6 +179,7 @@ func (d *Data) Execute(conn net.Conn) {
 
 		d.Lock.Lock()
 		d.Result = append(cmdreslen, []byte("Command error : "+err.Error())...)
+		d.Sendingsize = len(d.Result)
 		d.Lock.Unlock()
 
 		log.Printf("len of totres : %v, totres : %v\n", len(d.Result), string(d.Result))
@@ -181,9 +190,13 @@ func (d *Data) Execute(conn net.Conn) {
 }
 
 func (d *Data) CommSend(conn net.Conn) {
-	// var sendingres []byte
-	// sendingres = append(sendingres, <-Result...)
+
 	log.Println("Ready for sending!")
+	log.Printf("d.Recvall : %v\n", d.Recvall)
+	log.Printf("d.Command : %v\n", d.Command)
+	log.Printf("d.Totsize : %v\n", d.Totsize)
+	log.Printf("d.Result : %v\n", string(d.Result))
+	log.Printf("d.Sendingsize : %v\n", d.Sendingsize)
 
 	d.Lock.Lock()
 	_, err := conn.Write(d.Result)
@@ -191,6 +204,7 @@ func (d *Data) CommSend(conn net.Conn) {
 		log.Printf("write err : %v\n", err)
 		return
 	}
+
 	log.Println("sending ")
 	d.Lock.Unlock()
 }

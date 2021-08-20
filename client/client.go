@@ -9,6 +9,7 @@ import (
 	"net"
 	"os"
 	"strconv"
+	"sync"
 )
 
 var ErrorNocommand = errors.New("no command")
@@ -21,7 +22,11 @@ func read(c net.Conn) {
 		var resultall []byte
 		resultlen := 0
 		data := make([]byte, 4096)
+		var lock = new(sync.Mutex)
+		defer lock.Unlock()
 
+		lock.Lock()
+		log.Println("lock")
 		recieive, err := c.Read(data) //server로부터 data 읽어오면
 		if err != nil {
 			if err == io.EOF {
@@ -90,6 +95,7 @@ func read(c net.Conn) {
 		}
 	}
 }
+
 func sending(c net.Conn, sendingerr chan error) {
 	sc := bufio.NewScanner(os.Stdin) //init scanner
 
@@ -113,7 +119,7 @@ func sending(c net.Conn, sendingerr chan error) {
 				sendingerr <- er
 			}
 			// // log.Println("sending complete")
-			// go read(c)
+			go read(c)
 			// go read(c)
 
 		}
@@ -155,7 +161,7 @@ func main() {
 			log.Println("sending complete")
 
 		}
-		go read(conn)
+		// go read(conn)
 		// read(conn)
 	}
 }
