@@ -16,52 +16,61 @@ var ErrorNocommand = errors.New("no command")
 
 var ErrorNotEnded = errors.New("")
 var ErrorNotConverttoAtoi = errors.New("")
+var lock = new(sync.Mutex)
 
 func read(c net.Conn) {
+
 	for { //연결이 존재할 때
 		var resultall []byte
 		resultlen := 0
 		data := make([]byte, 4096)
-		var lock = new(sync.Mutex)
-		defer lock.Unlock()
 
 		lock.Lock()
 		log.Println("lock")
-		recieive, err := c.Read(data) //server로부터 data 읽어오면
+		receive, err := c.Read(data) //server로부터 data 읽어오면
+		lock.Unlock()
+		log.Println("unlock")
 		if err != nil {
 			if err == io.EOF {
 				log.Println("연결 종료")
 			}
 			break
 		} else { //data를 읽어올 때 error 없을 경우
-			if recieive > 0 {
+			if receive > 0 {
 				recvSize := data[:bytes.Index(data, []byte("\n"))] //data 첫부분에서 보낸 size check
 				size, err := strconv.Atoi(string(recvSize))        //int로 converting
 
 				log.Printf("receive size : %d\n", size)
 
+				lock.Lock()
 				sizelen := len(strconv.Itoa(size)) //server가 명시한 data의 전체 길이(cmd.Output()의 길이)
 				log.Printf("sizelen : %d\n", sizelen)
+				lock.Unlock()
 
 				totsize := size + sizelen //server가 보낸 data의 전체 길이
 				log.Printf("totsize : %d\n", totsize)
 				if err != nil {
-					log.Println(err)
-
+					panic(err)
 				} else {
+
 					sizeindex := bytes.Index(data, []byte("\n")) + 1
 					log.Printf("sizeindex : %d\n", sizeindex)
 
-					log.Printf("receive - sizeindex : %d\n", recieive-sizeindex)
+					log.Printf("receive - sizeindex : %d\n", receive-sizeindex)
 
-					resultall = append(resultall, data[sizeindex:recieive]...)
-					resultlen += recieive
+					lock.Lock()
+					resultall = append(resultall, data[sizeindex:receive]...)
+					resultlen += receive
+					lock.Unlock()
+					log.Println("unlock")
 
 					if totsize > len(data) {
 						a := 0
 						for {
 							log.Println("loop started")
+							lock.Lock()
 							LargeReceive, err := c.Read(data)
+							lock.Unlock()
 
 							if err != nil {
 								log.Printf("Read LargeReceive error : %v\n", err)
@@ -69,21 +78,32 @@ func read(c net.Conn) {
 							}
 							log.Printf("Read LargeReceive : %v\n", LargeReceive)
 
+							lock.Lock()
+							log.Println("lock")
 							resultlen += LargeReceive
-
 							resultall = append(resultall, data[:LargeReceive]...)
+							lock.Unlock()
+							log.Println("unlock")
 
 							a += 1
 							log.Printf("%d번째 loop\n", a)
 							if resultlen == totsize {
+								lock.Lock()
+								log.Println("lock")
 								log.Printf("\n%v", string(resultall[:resultlen]))
 								log.Printf("resultlen : %v == totsize : %v\n", resultlen, totsize)
+								lock.Unlock()
+								log.Println("unlock")
 								break
 							}
 							log.Printf("NOT FINISH LOOP resultlen : %v != totsize : %v\n", resultlen, totsize)
 						}
 					} else {
-						log.Printf("\n%v", string(resultall[:recieive-sizeindex]))
+						lock.Lock()
+						log.Println("lock")
+						log.Printf("\n%v", string(resultall[:receive-sizeindex]))
+						lock.Unlock()
+						log.Println("unlock")
 						return
 					}
 					return
@@ -119,7 +139,7 @@ func sending(c net.Conn, sendingerr chan error) {
 				sendingerr <- er
 			}
 			// // log.Println("sending complete")
-			go read(c)
+
 			// go read(c)
 
 		}
@@ -141,11 +161,18 @@ func main() {
 		return
 	}
 
+	go func() {
+		for {
+			read(conn)
+		}
+	}()
+
 	for {
 		defer conn.Close()
 		sendingerr := make(chan error)
 		// wg := sync.WaitGroup{}
 		// wg.Add(1)
+		log.Printf("go make")
 		go sending(conn, sendingerr)
 		// err := sending(conn)
 		e := <-sendingerr
@@ -159,9 +186,9 @@ func main() {
 		}
 		if e == nil {
 			log.Println("sending complete")
-
 		}
 		// go read(conn)
-		// read(conn)
+		//
 	}
+
 }
