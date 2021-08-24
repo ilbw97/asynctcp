@@ -10,18 +10,19 @@ import (
 	"os"
 	"strconv"
 	"sync"
-	"syscall"
 )
 
-var ErrorNocommand = errors.New("no command")
+var ErrorNocommand = errors.New("insert command!")
 
 var ErrorNotEnded = errors.New("")
 var ErrorNotConverttoAtoi = errors.New("")
 
 var ErrorReadLargeReceive = errors.New("Cannot Read Large Data")
 var ErrorEOF = errors.New("연결 종료")
-var ErrorBreakpipe = errors.New("Cannot Sending Data")
+
 var lock = new(sync.Mutex)
+
+var connerr error
 
 func read(c net.Conn) error {
 
@@ -37,7 +38,7 @@ func read(c net.Conn) error {
 		log.Println("unlock")
 		if err != nil {
 			if err == io.EOF {
-				//log.Println("연결 종료")
+				connerr = ErrorEOF
 				return ErrorEOF
 			}
 			return err
@@ -79,7 +80,6 @@ func read(c net.Conn) error {
 							lock.Unlock()
 
 							if err != nil {
-								//log.Printf("Read LargeReceive error : %v\n", err)
 								return ErrorReadLargeReceive
 							}
 							log.Printf("Read LargeReceive : %v\n", LargeReceive)
@@ -129,36 +129,26 @@ func sending(c net.Conn, sendingerr chan error) {
 
 	sc.Scan() //stdinput으로 들어온 한 줄 그대로 scan
 	if sc.Err() != nil {
-		//if errors.Is(sc.Err(), syscall.EPIPE) {
-		//	sendingerr <- ErrorBreakpipe
-		//	return
-		//}
-		//log.Println(sc.Err())
 		sendingerr <- sc.Err()
 		return
 	} else {
 		var comm string  //command
 		comm = sc.Text() //읽어온 데이터를 변수에 저장
-
-		if comm == "" {
-			log.Println("insert command!")
-			sendingerr <- ErrorNocommand
-			return
+		if connerr != nil {
+			sendingerr <- connerr
 		} else {
-			commlen := strconv.Itoa(len(comm))
-			_, er := c.Write([]byte(commlen + "\n" + comm)) //server로 전송
-			if er != nil {
-				if errors.Is(er, syscall.EPIPE) {
-					sendingerr <- ErrorBreakpipe
-				} else {
-					//log.Println(er)
+			if comm == "" {
+				sendingerr <- ErrorNocommand
+			} else {
+				commlen := strconv.Itoa(len(comm))
+				_, er := c.Write([]byte(commlen + "\n" + comm)) //server로 전송
+				if er != nil {
 					sendingerr <- er
 				}
-				return
 			}
 		}
+		sendingerr <- nil
 	}
-	sendingerr <- nil
 }
 
 func main() {
@@ -173,14 +163,13 @@ func main() {
 		log.Println(err)
 		return
 	}
-	log.Println("read goroutine make")
+	log.Println("Read goroutine make")
 	go func() {
 		for {
 			readerr := read(conn)
 			switch readerr {
 			case nil:
-				log.Println("Read Complete")
-				return
+				log.Println("Complete reading")
 			case ErrorEOF:
 				log.Println(readerr)
 				return
@@ -192,31 +181,28 @@ func main() {
 				return
 			}
 		}
-
 	}()
 
 	for {
 		defer conn.Close()
 		sendingerr := make(chan error)
 
-		log.Println("sending go make")
+		log.Println("Sending goroutine make")
 		go sending(conn, sendingerr)
 
 		e := <-sendingerr
 
 		switch e {
-		case ErrorBreakpipe:
-			log.Printf("%v\n", e)
-			break
 		case ErrorNocommand:
+			log.Println(e)
 			continue
+		case nil:
+			log.Println("Sending Complete")
 		default:
-			if e == nil {
-				log.Println("Sending Complete")
-			} else {
-				log.Printf("%v\n", e)
-				break
-			}
+			log.Println(e)
+			break
 		}
+
 	}
+
 }

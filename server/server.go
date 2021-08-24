@@ -18,6 +18,7 @@ type Data struct {
 	Sendingsize int
 	Result      []byte
 	Lock        sync.Mutex
+	connerr     error
 }
 
 func main() {
@@ -37,6 +38,7 @@ func main() {
 			log.Printf("Accept Error : %v\n", err)
 			continue
 		}
+
 		go d.CommRead(conn)
 		defer conn.Close()
 	}
@@ -54,6 +56,7 @@ func (d *Data) CommRead(conn net.Conn) {
 
 			if err == io.EOF {
 				log.Printf("connection is closed from client : %v\n", conn.RemoteAddr().String())
+				d.connerr = err
 				return
 			}
 
@@ -136,9 +139,7 @@ func (d *Data) CommRead(conn net.Conn) {
 }
 
 func (d *Data) Execute(conn net.Conn) {
-	// Result := make(chan []byte, 4096)
-	// defer close(Result)
-
+	log.Printf("d.connerr : %v\n", d.connerr)
 	log.Printf("#############Result before exex.Command : %v, len of Result : %v#############\n", string(d.Result), len(d.Result))
 
 	cmd := exec.Command("bash", "-c", d.Command)
@@ -151,15 +152,19 @@ func (d *Data) Execute(conn net.Conn) {
 	case nil:
 		if string(cmdres) == "" {
 			cmdreslen = []byte(strconv.Itoa(len("No output data"+"\n")) + "\n")
-
 			d.Lock.Lock()
 			d.Result = append(cmdreslen, ([]byte("No output data"))...)
 			d.Sendingsize = len(d.Result)
 			d.Lock.Unlock()
+			if d.connerr == nil {
+				go d.CommSend(conn)
+			} else {
+				log.Printf("Cannot sending Result : %v\n", d.connerr)
+				log.Printf("connection is closed from client : %v\n", conn.RemoteAddr().String())
+				return
+			}
 
-			go d.CommSend(conn)
 			log.Println("close Result!")
-
 		} else {
 			log.Println("#############stable case#############")
 			d.Lock.Lock()
@@ -168,9 +173,16 @@ func (d *Data) Execute(conn net.Conn) {
 			log.Printf("len of totres : %v, totres : %v\n", len(d.Result), string(d.Result))
 			d.Lock.Unlock()
 
-			go d.CommSend(conn)
+			if d.connerr == nil {
+				go d.CommSend(conn)
+			} else {
+				log.Printf("Cannot sending Result : %v\n", d.connerr)
+				log.Printf("connection is closed from client : %v\n", conn.RemoteAddr().String())
+				return
+			}
 			log.Println("close Result!")
 		}
+
 	default:
 		log.Println("#############error case#############")
 		log.Println(err)
@@ -184,27 +196,42 @@ func (d *Data) Execute(conn net.Conn) {
 
 		log.Printf("len of totres : %v, totres : %v\n", len(d.Result), string(d.Result))
 
-		go d.CommSend(conn)
+		if d.connerr == nil {
+			go d.CommSend(conn)
+		} else {
+			log.Printf("Cannot sending Result : %v\n", d.connerr)
+			log.Printf("connection is closed from client : %v\n", conn.RemoteAddr().String())
+			return
+		}
 		log.Println("close Result!")
 	}
 }
 
 func (d *Data) CommSend(conn net.Conn) {
+	//log.Printf("d.connerr : %v\n", d.connerr)
+	if d.connerr == nil {
+		log.Printf("Ready for sending to %v!", conn.RemoteAddr().String())
+		log.Printf("d.Recvall : %v\n", d.Recvall)
+		log.Printf("d.Command : %v\n", d.Command)
+		log.Printf("d.Totsize : %v\n", d.Totsize)
+		log.Printf("d.Result : %v\n", string(d.Result))
+		log.Printf("d.Sendingsize : %v\n", d.Sendingsize)
 
-	log.Println("Ready for sending!")
-	log.Printf("d.Recvall : %v\n", d.Recvall)
-	log.Printf("d.Command : %v\n", d.Command)
-	log.Printf("d.Totsize : %v\n", d.Totsize)
-	log.Printf("d.Result : %v\n", string(d.Result))
-	log.Printf("d.Sendingsize : %v\n", d.Sendingsize)
+		d.Lock.Lock()
 
-	d.Lock.Lock()
-	_, err := conn.Write(d.Result)
-	if err != nil {
-		log.Printf("write err : %v\n", err)
+		_, err := conn.Write(d.Result)
+		if err != nil {
+			log.Printf("write err : %v\n", err)
+			return
+		}
+
+		log.Println("sending complete")
+		d.Lock.Unlock()
+	} else {
+		log.Printf("Cannot sending result : %v\n", d.connerr)
+		log.Printf("connection is closed from client : %v\n", conn.RemoteAddr().String())
+
 		return
 	}
 
-	log.Println("sending ")
-	d.Lock.Unlock()
 }
