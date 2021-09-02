@@ -11,14 +11,16 @@ import (
 )
 
 type Data struct {
-	Conn        net.Conn
-	Recvall     []byte
-	Command     string
-	Totsize     int
+	Recvall []byte
+	Totsize int
+	Lock    sync.Mutex
+	Connerr error
+	Command string
+	Result  []CommResult
+}
+type CommResult struct {
 	Sendingsize int
-	Result      []byte
-	Lock        sync.Mutex
-	connerr     error
+	Result      string
 }
 
 func main() {
@@ -40,11 +42,14 @@ func main() {
 		}
 
 		go d.CommRead(conn)
-		defer conn.Close()
 	}
 }
 
+//Client로부터 data를 읽어와, linux command를 추출해 Execute function에 전달하는 함수.
 func (d *Data) CommRead(conn net.Conn) {
+
+	defer conn.Close()
+
 	log.Printf("serving %s\n", conn.RemoteAddr().String())
 	for {
 		var recvall []byte
@@ -53,10 +58,9 @@ func (d *Data) CommRead(conn net.Conn) {
 
 		recvCommand, err := conn.Read(recvData)
 		if err != nil {
-
 			if err == io.EOF {
-				log.Printf("connection is closed from client : %v\n", conn.RemoteAddr().String())
-				d.connerr = err
+				log.Printf("Connection is closed from Client : %v\n", conn.RemoteAddr().String())
+				d.Connerr = err
 				return
 			}
 
@@ -69,27 +73,13 @@ func (d *Data) CommRead(conn net.Conn) {
 				size, err := strconv.Atoi(string(recvSize))
 				if err != nil {
 					return
-				}
-				log.Printf("receive command size : %d\n", size)
-
-				sizelen := len(strconv.Itoa(size))
-				log.Printf("sizelen : %d\n", sizelen)
-
-				totsize := size + sizelen
-				d.Lock.Lock()
-
-				d.Totsize = totsize
-				d.Lock.Unlock()
-				log.Printf("totsize : %d\n", totsize)
-				if err != nil {
-					log.Println(err)
 				} else {
+					sizelen := len(strconv.Itoa(size))
 
+					totsize := size + sizelen
+
+					d.Totsize = totsize
 					sizeindex := bytes.Index(recvData, []byte("\n")) + 1
-
-					log.Printf("sizeindex : %d\n", sizeindex)
-					log.Printf("receive - sizeindex : %d\n", recvCommand-sizeindex)
-					log.Printf("recvlen : %v\n", recvlen)
 
 					recvall = append(recvall, recvData[sizeindex:recvCommand]...)
 
@@ -98,11 +88,11 @@ func (d *Data) CommRead(conn net.Conn) {
 					if totsize > len(recvData) {
 						a := 0
 						for {
-							log.Println("loop started")
+							log.Println("Loop started")
 
 							LargeReceive, err := conn.Read(recvData)
 							if err != nil {
-								log.Printf("read LargeReceive error : %v\n", err)
+								log.Printf("Read LargeReceive error : %v\n", err)
 							}
 
 							log.Printf("Read LargeReceive : %v\n", LargeReceive)
@@ -115,8 +105,10 @@ func (d *Data) CommRead(conn net.Conn) {
 							if recvlen == totsize {
 								d.Lock.Lock()
 								d.Command = string(recvall[:recvlen])
-								d.Lock.Unlock()
+								log.Println(d.Command)
+
 								go d.Execute(conn)
+								d.Lock.Unlock()
 
 							}
 
@@ -125,9 +117,9 @@ func (d *Data) CommRead(conn net.Conn) {
 					} else {
 						d.Lock.Lock()
 						d.Command = string(recvall[:recvlen])
-						d.Lock.Unlock()
+						log.Println(d.Command)
 						go d.Execute(conn)
-
+						d.Lock.Unlock()
 					}
 				}
 			} else {
@@ -138,100 +130,74 @@ func (d *Data) CommRead(conn net.Conn) {
 	}
 }
 
+// Client로부터 받은 data 중, 추출한 linux command를 실행하는 function.
 func (d *Data) Execute(conn net.Conn) {
-	log.Printf("d.connerr : %v\n", d.connerr)
-	log.Printf("#############Result before exex.Command : %v, len of Result : %v#############\n", string(d.Result), len(d.Result))
+	var commres CommResult
 
 	cmd := exec.Command("bash", "-c", d.Command)
 	log.Printf("Execute Command : %v\n", cmd)
 
 	cmdres, err := cmd.Output()
-	cmdreslen := []byte(strconv.Itoa(len(string(cmdres)+"\n")) + "\n")
+	strcmdres := string(cmdres)
+	cmdreslen := strconv.Itoa(len(string(cmdres)+"\n")) + "\n"
 
 	switch err {
 	case nil:
 		if string(cmdres) == "" {
-			cmdreslen = []byte(strconv.Itoa(len("No output data"+"\n")) + "\n")
+			cmdreslen = strconv.Itoa(len("No output data"+"\n")) + "\n"
 			d.Lock.Lock()
-			d.Result = append(cmdreslen, ([]byte("No output data"))...)
-			d.Sendingsize = len(d.Result)
-			d.Lock.Unlock()
-			if d.connerr == nil {
-				go d.CommSend(conn)
-			} else {
-				log.Printf("Cannot sending Result : %v\n", d.connerr)
-				log.Printf("connection is closed from client : %v\n", conn.RemoteAddr().String())
-				return
-			}
 
-			log.Println("close Result!")
+			commres.Result = cmdreslen + "No output data"
+			commres.Sendingsize = len(commres.Result)
+			d.Result = append(d.Result, commres)
+
+			d.CommSend(conn)
+			d.Lock.Unlock()
 		} else {
 			log.Println("#############stable case#############")
 			d.Lock.Lock()
-			d.Result = append(cmdreslen, cmdres...)
-			d.Sendingsize = len(d.Result)
-			log.Printf("len of totres : %v, totres : %v\n", len(d.Result), string(d.Result))
-			d.Lock.Unlock()
 
-			if d.connerr == nil {
-				go d.CommSend(conn)
-			} else {
-				log.Printf("Cannot sending Result : %v\n", d.connerr)
-				log.Printf("connection is closed from client : %v\n", conn.RemoteAddr().String())
-				return
-			}
-			log.Println("close Result!")
+			commres.Result = cmdreslen + strcmdres
+			commres.Sendingsize = len(commres.Result)
+			d.Result = append(d.Result, commres)
+
+			d.CommSend(conn)
+			d.Lock.Unlock()
 		}
 
 	default:
 		log.Println("#############error case#############")
 		log.Println(err)
 
-		cmdreslen = []byte(strconv.Itoa(len("Command error : "+err.Error()+"\n")) + "\n")
+		cmdreslen = strconv.Itoa(len("Command error : "+err.Error()+"\n")) + "\n"
 
 		d.Lock.Lock()
-		d.Result = append(cmdreslen, []byte("Command error : "+err.Error())...)
-		d.Sendingsize = len(d.Result)
+
+		commres.Result = cmdreslen + "Command error : " + err.Error()
+		commres.Sendingsize = len(commres.Result)
+		d.Result = append(d.Result, commres)
+
+		d.CommSend(conn)
 		d.Lock.Unlock()
-
-		log.Printf("len of totres : %v, totres : %v\n", len(d.Result), string(d.Result))
-
-		if d.connerr == nil {
-			go d.CommSend(conn)
-		} else {
-			log.Printf("Cannot sending Result : %v\n", d.connerr)
-			log.Printf("connection is closed from client : %v\n", conn.RemoteAddr().String())
-			return
-		}
-		log.Println("close Result!")
 	}
 }
 
+// Execute에서 실행한 결과를 Client에게 전송하는 함수
 func (d *Data) CommSend(conn net.Conn) {
-	//log.Printf("d.connerr : %v\n", d.connerr)
-	if d.connerr == nil {
-		log.Printf("Ready for sending to %v!", conn.RemoteAddr().String())
-		log.Printf("d.Recvall : %v\n", d.Recvall)
-		log.Printf("d.Command : %v\n", d.Command)
-		log.Printf("d.Totsize : %v\n", d.Totsize)
-		log.Printf("d.Result : %v\n", string(d.Result))
-		log.Printf("d.Sendingsize : %v\n", d.Sendingsize)
+	if d.Connerr == nil {
+		log.Printf("#############Ready for sending to %v!#############", conn.RemoteAddr().String())
 
-		d.Lock.Lock()
-
-		_, err := conn.Write(d.Result)
-		if err != nil {
-			log.Printf("write err : %v\n", err)
-			return
+		for n, res := range d.Result {
+			log.Printf("%d : 번째 %v\n", n, string(res.Result))
+			_, err := conn.Write([]byte(res.Result))
+			if err != nil {
+				log.Printf("write err : %v\n", err)
+			}
+			d.Result = append(d.Result[:n], d.Result[n+1:]...)
 		}
-
 		log.Println("sending complete")
-		d.Lock.Unlock()
 	} else {
-		log.Printf("Cannot sending result : %v\n", d.connerr)
+		log.Printf("Cannot sending result : %v\n", d.Connerr)
 		log.Printf("connection is closed from client : %v\n", conn.RemoteAddr().String())
-
-		return
 	}
-
 }
